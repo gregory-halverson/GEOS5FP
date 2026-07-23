@@ -1,5 +1,6 @@
 """Tests for variable information lookup and queries."""
 import pytest
+from datetime import datetime
 from GEOS5FP import GEOS5FPConnection
 from GEOS5FP.constants import GEOS5FP_VARIABLES
 
@@ -153,3 +154,51 @@ class TestAllVariablesAccessible:
             assert len(product) > 0
             assert isinstance(variable, str)
             assert len(variable) > 0
+
+
+class TestQueryBackwardCompatibility:
+    """Tests for snapshot query routing compatibility."""
+
+    def test_query_routes_single_raster_snapshot_to_variable(self, conn, monkeypatch):
+        sentinel = object()
+        captured = {}
+
+        def fake_variable(**kwargs):
+            captured.update(kwargs)
+            return sentinel
+
+        monkeypatch.setattr(conn, 'variable', fake_variable)
+
+        result = conn.query(
+            target_variables="AOT",
+            time_UTC=datetime(2024, 1, 1, 12, 0),
+            geometry=object(),
+            resampling="nearest",
+            expected_hours=[1.5, 4.5]
+        )
+
+        assert result is sentinel
+        assert captured["variable_name"] == "AOT"
+        assert captured["resampling"] == "nearest"
+        assert captured["expected_hours"] == [1.5, 4.5]
+
+    def test_query_routes_raw_single_raster_snapshot_to_interpolate(self, conn, monkeypatch):
+        sentinel = object()
+        captured = {}
+
+        def fake_interpolate(**kwargs):
+            captured.update(kwargs)
+            return sentinel
+
+        monkeypatch.setattr(conn, 'interpolate', fake_interpolate)
+
+        result = conn.query(
+            target_variables="TESTVAR",
+            dataset="inst3_2d_asm_Nx",
+            time_UTC=datetime(2024, 1, 1, 12, 0),
+            geometry=object()
+        )
+
+        assert result is sentinel
+        assert captured["product"] == "inst3_2d_asm_Nx"
+        assert captured["variable"] == "TESTVAR"

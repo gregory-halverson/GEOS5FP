@@ -1903,6 +1903,28 @@ class GEOS5FPConnection:
         if verbose is None:
             verbose = self.verbose
 
+        normalized_target_variables = target_variables
+
+        if normalized_target_variables is None and variable_name is not None:
+            normalized_target_variables = variable_name
+
+        if self._should_use_legacy_raster_snapshot_query(
+                target_variables=normalized_target_variables,
+                targets_df=targets_df,
+                time_UTC=time_UTC,
+                time_range=time_range,
+                geometry=geometry,
+                lat=lat,
+                lon=lon):
+            return self._query_raster_snapshot(
+                target_variables=normalized_target_variables,
+                time_UTC=time_UTC,
+                dataset=dataset,
+                geometry=geometry,
+                resampling=resampling,
+                **kwargs
+            )
+
         return query(
             target_variables=target_variables,
             targets_df=targets_df,
@@ -1919,5 +1941,102 @@ class GEOS5FPConnection:
             verbose=verbose,
             **kwargs
         )
+
+    def _should_use_legacy_raster_snapshot_query(
+            self,
+            target_variables: Union[str, List[str]] = None,
+            targets_df: Union[pd.DataFrame, gpd.GeoDataFrame] = None,
+            time_UTC: Union[datetime, str, List[datetime], List[str], pd.Series] = None,
+            time_range: Tuple[Union[datetime, str], Union[datetime, str]] = None,
+            geometry: Union[RasterGeometry, Point, MultiPoint, List, gpd.GeoSeries] = None,
+            lat: Union[float, List[float], pd.Series] = None,
+            lon: Union[float, List[float], pd.Series] = None) -> bool:
+        if targets_df is not None or time_range is not None or time_UTC is None:
+            return False
+
+        if isinstance(time_UTC, (list, tuple, pd.Series, np.ndarray)):
+            return False
+
+        if lat is not None or lon is not None:
+            return False
+
+        if isinstance(geometry, (list, gpd.GeoSeries)):
+            return False
+
+        if geometry is not None and is_point_geometry(geometry):
+            return False
+
+        if target_variables is None:
+            return False
+
+        if isinstance(target_variables, str):
+            return True
+
+        return len(target_variables) == 1
+
+    def _query_raster_snapshot(
+            self,
+            target_variables: Union[str, List[str]],
+            time_UTC: Union[datetime, str],
+            dataset: str = None,
+            geometry: RasterGeometry = None,
+            resampling: str = None,
+            **kwargs) -> Raster:
+        if isinstance(target_variables, str):
+            variable_names = [target_variables]
+        else:
+            variable_names = list(target_variables)
+
+        if len(variable_names) != 1:
+            raise ValueError("Raster snapshot queries only support a single target variable")
+
+        variable_name = variable_names[0]
+
+        if variable_name in GEOS5FP_VARIABLES:
+            return self.variable(
+                variable_name=variable_name,
+                time_UTC=time_UTC,
+                geometry=geometry,
+                resampling=resampling,
+                interval=kwargs.get("interval"),
+                expected_hours=kwargs.get("expected_hours"),
+                min_value=kwargs.get("min_value"),
+                max_value=kwargs.get("max_value"),
+                exclude_values=kwargs.get("exclude_values"),
+                cmap=kwargs.get("cmap"),
+                clip_min=kwargs.get("clip_min"),
+                clip_max=kwargs.get("clip_max")
+            )
+
+        if dataset is None:
+            raise ValueError(
+                f"Dataset must be specified when using raw variable name '{variable_name}'. "
+                f"Known variables: {list(GEOS5FP_VARIABLES.keys())}"
+            )
+
+        if isinstance(time_UTC, str):
+            time_UTC = parser.parse(time_UTC)
+
+        result = self.interpolate(
+            time_UTC=time_UTC,
+            product=dataset,
+            variable=variable_name,
+            geometry=geometry,
+            resampling=resampling,
+            interval=kwargs.get("interval"),
+            expected_hours=kwargs.get("expected_hours"),
+            min_value=kwargs.get("min_value"),
+            max_value=kwargs.get("max_value"),
+            exclude_values=kwargs.get("exclude_values"),
+            cmap=kwargs.get("cmap")
+        )
+
+        clip_min = kwargs.get("clip_min")
+        clip_max = kwargs.get("clip_max")
+
+        if clip_min is not None or clip_max is not None:
+            result = rt.clip(result, clip_min, clip_max)
+
+        return result
     
 GEOS5FPConnection.query.__doc__ = query.__doc__
